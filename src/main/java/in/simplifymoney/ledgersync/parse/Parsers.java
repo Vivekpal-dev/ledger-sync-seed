@@ -9,9 +9,13 @@ public final class Parsers {
 
     private final List<MessageParser> parsers;
 
-    public Parsers() {
-        this(List.of(new HdfcSmsParser(), new IciciSmsParser()));
-    }
+   public Parsers() {
+    this(List.of(
+            new HdfcSmsParser(),
+            new IciciSmsParser(),
+            new EmailParser()
+    ));
+   }
 
     public Parsers(List<MessageParser> parsers) {
         this.parsers = List.copyOf(parsers);
