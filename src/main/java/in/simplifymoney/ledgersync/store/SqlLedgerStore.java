@@ -76,24 +76,89 @@ public final class SqlLedgerStore implements LedgerStore, AutoCloseable {
         }
     }
 
+    
     @Override
-    public void save(NormalizedTxn t) {
-        try (PreparedStatement ps = conn.prepareStatement(
+public void save(NormalizedTxn t) {
+    try {
+        conn.setAutoCommit(false);
+
+        String findSql =
+                "SELECT id, source_message_ids FROM ledger "
+                        + "WHERE account_last4 = ? "
+                        + "AND occurred_at = ? "
+                        + "AND direction = ? "
+                        + "AND amount = ?";
+
+        try (PreparedStatement find = conn.prepareStatement(findSql)) {
+            find.setString(1, t.accountLast4());
+            find.setString(2, t.occurredAt().toString());
+            find.setString(3, t.direction().name());
+            find.setBigDecimal(4, t.amount());
+
+            try (ResultSet rs = find.executeQuery()) {
+                if (rs.next()) {
+                    long id = rs.getLong("id");
+                    String existingIds = rs.getString("source_message_ids");
+
+                    List<String> mergedIds = new ArrayList<>();
+
+                    if (existingIds != null) {
+                        mergedIds.addAll(
+                                Arrays.stream(existingIds.split(","))
+                                        .filter(s -> !s.isBlank())
+                                        .toList()
+                        );
+                    }
+
+                    mergedIds.addAll(t.sourceMessageIds());
+
+                    List<String> sortedIds = mergedIds.stream()
+                            .distinct()
+                            .sorted()
+                            .toList();
+
+                    try (PreparedStatement update = conn.prepareStatement(
+                            "UPDATE ledger SET source_message_ids = ? "
+                                    + "WHERE id = ?")) {
+                        update.setString(1, String.join(",", sortedIds));
+                        update.setLong(2, id);
+                        update.executeUpdate();
+                    }
+
+                    conn.commit();
+                    return;
+                }
+            }
+        }
+
+        try (PreparedStatement insert = conn.prepareStatement(
                 "INSERT INTO ledger(account_last4, occurred_at, direction, amount,"
                         + " category, merchant, source_message_ids)"
                         + " VALUES (?,?,?,?,?,?,?)")) {
-            ps.setString(1, t.accountLast4());
-            ps.setString(2, t.occurredAt().toString());
-            ps.setString(3, t.direction().name());
-            ps.setBigDecimal(4, t.amount());
-            ps.setString(5, t.category().name());
-            ps.setString(6, t.merchant());
-            ps.setString(7, String.join(",", t.sourceMessageIds()));
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new IllegalStateException("could not save " + t, e);
+            insert.setString(1, t.accountLast4());
+            insert.setString(2, t.occurredAt().toString());
+            insert.setString(3, t.direction().name());
+            insert.setBigDecimal(4, t.amount());
+            insert.setString(5, t.category().name());
+            insert.setString(6, t.merchant());
+            insert.setString(7, String.join(",", t.sourceMessageIds()));
+            insert.executeUpdate();
+        }
+
+        conn.commit();
+    } catch (SQLException e) {
+        try {
+            conn.rollback();
+        } catch (SQLException ignored) {
+        }
+        throw new IllegalStateException("could not save " + t, e);
+    } finally {
+        try {
+            conn.setAutoCommit(true);
+        } catch (SQLException ignored) {
         }
     }
+}
 
     @Override
     public List<NormalizedTxn> all() {
