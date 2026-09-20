@@ -127,30 +127,7 @@ Run it:
 ./gradlew run --args="report submission/"
 ```
 
-`./verify.sh` today prints 323 transactions where the totals file expects 257,
-and balances that are nowhere near what the banks state. That is the starting
-point, not a bug you have hit.
 
----
-
-## What is missing, in the order we would do it
-
-1. **`EmailParser` is a stub.** Every email in the corpus is currently dropped.
-2. **`IciciSmsParser` reads one of the ICICI formats.** There is at least one
-   more in the corpus, falling straight through.
-3. **Nothing deduplicates.** `IngestService` saves one transaction per message.
-   One transaction is not one message.
-4. **Categories are decided from the direction alone.** No `MICRO`, no
-   `TRANSFER`.
-5. **`Reports.summary` adds up whatever it is given.** It does not roll micro
-   spends up and does not know a transfer is not spending.
-6. **`Reports.reconciliation` is not written.**
-7. **`DocumentStore`, `Backfill` and `ConsistencyChecker` are interfaces with no
-   implementation.** See below.
-8. **`incident/INC-2026-09-11.md` is open.** Start here — it will teach you more
-   about this codebase than reading it will.
-
----
 
 ## The document store
 
@@ -195,3 +172,46 @@ Then:
   could have asked is a worse signal than asking.
 
 `talent.acquisition@simplifymoney.in`
+
+---
+
+## Implementation notes
+
+### Document store
+DynamoDB Local is used for the document-store implementation because the
+assessment prefers DynamoDB and the same access patterns can be exercised
+locally through Docker Compose.
+
+The document design separates transaction documents, message-to-transaction
+lookups, and per-account category totals so the three required access patterns
+can be served directly.
+
+### Backfill
+The SQL ledger is read and duplicate transaction identities are collapsed
+before writing to the document store. Re-running the backfill is designed to be
+idempotent.
+
+### Consistency checking
+The consistency checker compares transaction identity and transaction fields,
+rather than relying only on row counts. It can therefore report missing or
+changed transactions.
+
+### Known limitation
+The corpus checkpoint currently reports one missing transaction for account
+4821 and an unexplained ₹7,500 balance difference. No synthetic transaction is
+added to hide this discrepancy; it is reported through reconciliation.
+
+The DynamoDB 100,000-transaction benchmark numbers are not claimed until they
+have been measured locally.
+
+### AI disclosure
+AI assistance was used during implementation for code suggestions,
+debugging, explanations, and test ideas. Generated code was reviewed,
+modified, compiled, and tested manually. One initially generated email-date
+parsing implementation was incorrect and was corrected during development.
+
+### Verification
+The dependency-free self-check can be run with:
+
+```bash
+./verify.sh
